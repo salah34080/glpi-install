@@ -1,0 +1,101 @@
+#!/bin/bash
+
+# Vérifier si l'utilisateur actuel est "glpi"
+if [ "$(whoami)" != "glpi" ]; then
+    echo "Ce script doit être exécuté en tant qu'utilisateur 'glpi'."
+    exit 1
+fi
+
+# Mise à jour de la liste des paquets et mise à niveau des paquets installés
+echo "Mise à jour des paquets disponibles..."
+sudo apt update -y
+echo "Mise à jour des paquets installés..."
+sudo apt upgrade -y
+
+# Installation des paquets nécessaires (Apache, MariaDB, PHP et extensions)
+echo "Installation des paquets nécessaires..."
+sudo apt install apache2 mariadb-server libapache2-mod-php php php-mysql php-xml php-gd php-curl php-cli php-ldap php-imap php-apcu php-xmlrpc php-mbstring php-zip unzip -y
+
+# Téléchargement et installation de GLPI
+echo "Téléchargement de GLPI..."
+wget https://github.com/glpi-project/glpi/releases/download/10.0.0/glpi-10.0.0.tgz -P /tmp
+
+echo "Décompression de l'archive GLPI..."
+tar -xvzf /tmp/glpi-10.0.0.tgz -C /tmp
+
+# Déplacement du dossier GLPI vers le répertoire web d'Apache
+echo "Déplacement de GLPI vers /var/www/html..."
+sudo mv /tmp/glpi /var/www/html/glpi
+
+# Attribution des bonnes permissions au répertoire GLPI
+echo "Changement des permissions pour Apache..."
+sudo chown -R www-data:www-data /var/www/html/glpi
+sudo chmod -R 755 /var/www/html/glpi
+
+# Configuration d'Apache pour GLPI
+echo "Création du fichier de configuration Apache pour GLPI..."
+sudo bash -c 'cat > /etc/apache2/sites-available/glpi.conf <<EOF
+<VirtualHost *:80>
+   ServerAdmin admin@localhost
+   DocumentRoot /var/www/html/glpi
+   ServerName localhost
+   <Directory /var/www/html/glpi/>
+       Options FollowSymlinks
+       AllowOverride All
+       Require all granted
+   </Directory>
+   ErrorLog ${APACHE_LOG_DIR}/glpi_error.log
+   CustomLog ${APACHE_LOG_DIR}/glpi_access.log combined
+</VirtualHost>
+EOF'
+
+# Activation du site GLPI et des modules nécessaires
+echo "Activation du site GLPI et des modules Apache..."
+sudo a2ensite glpi.conf
+sudo a2enmod rewrite
+sudo systemctl restart apache2
+
+# Installation de la base de données MariaDB
+echo "Démarrage du service MariaDB..."
+sudo systemctl start mariadb
+sudo systemctl enable mariadb
+
+# Configuration de MariaDB
+echo "Configuration de la base de données MariaDB..."
+sudo mysql -e "CREATE DATABASE glpi;"
+sudo mysql -e "CREATE USER 'glpiuser'@'localhost' IDENTIFIED BY 'motdepasse';"
+sudo mysql -e "GRANT ALL PRIVILEGES ON glpi.* TO 'glpiuser'@'localhost';"
+sudo mysql -e "FLUSH PRIVILEGES;"
+
+echo "Installation terminée, vous pouvez maintenant accéder à GLPI sur http://localhost"
+
+# Création du Makefile
+echo "Génération du Makefile..."
+cat > Makefile <<EOL
+install:
+	@echo "Installation de GLPI"
+	bash install_glpi.sh
+
+start:
+	@echo "Démarrage des services"
+	sudo systemctl start apache2
+	sudo systemctl start mariadb
+
+stop:
+	@echo "Arrêt des services"
+	sudo systemctl stop apache2
+	sudo systemctl stop mariadb
+
+restart:
+	@echo "Redémarrage des services"
+	sudo systemctl restart apache2
+	sudo systemctl restart mariadb
+
+status:
+	@echo "Statut des services"
+	sudo systemctl status apache2
+	sudo systemctl status mariadb
+EOL
+
+chmod +x Makefile
+echo "Makefile créé avec succès."
